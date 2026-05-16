@@ -73,21 +73,15 @@
         btn.addEventListener('click', () => switchTab(btn.getAttribute('data-tab')));
     });
 
-    // ─── Tab Key Cycling ───
-    const cycleTargets = [userInput, 'plan', 'build', modelSelect, fileSelect];
-    let cycleIndex = 0;
+    // ─── Tab Key: Plan ↔ Build 전환만 ───
+    let currentMode = 'plan';
 
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Tab') {
             e.preventDefault();
-            cycleIndex = (cycleIndex + 1) % cycleTargets.length;
-            const target = cycleTargets[cycleIndex];
-            if (typeof target === 'string') {
-                switchTab(target);
-                userInput.focus();
-            } else if (target) {
-                target.focus();
-            }
+            currentMode = (currentMode === 'plan') ? 'build' : 'plan';
+            switchTab(currentMode);
+            userInput.focus();
         }
     });
 
