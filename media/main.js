@@ -73,12 +73,13 @@
         btn.addEventListener('click', () => switchTab(btn.getAttribute('data-tab')));
     });
 
-    // ─── Tab Key: Plan ↔ Build 전환만 ───
+    // ─── Tab Key: 입력창에서 Plan ↔ Build 전환 ───
     let currentMode = 'plan';
 
-    window.addEventListener('keydown', (e) => {
+    userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Tab') {
             e.preventDefault();
+            e.stopPropagation();
             currentMode = (currentMode === 'plan') ? 'build' : 'plan';
             switchTab(currentMode);
             userInput.focus();
