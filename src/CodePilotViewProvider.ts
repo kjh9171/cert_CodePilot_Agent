@@ -11,6 +11,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 	private _selectedFileUri?: vscode.Uri;
 	private _lastActiveEditor?: vscode.TextEditor;
 	private _isProcessing = false;
+	private _targetMode: 'auto' | 'file' | 'project' = 'auto';
 	private _maxAgentLoops = 5;
 
 	constructor(private readonly _extensionUri: vscode.Uri) {
@@ -45,7 +46,16 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					this._selectedModel = data.value;
 					break;
 				case 'selectFile':
-					this._selectedFileUri = data.value ? vscode.Uri.file(data.value) : undefined;
+					if (data.value === '__PROJECT__') {
+						this._selectedFileUri = undefined;
+						this._targetMode = 'project';
+					} else if (data.value) {
+						this._selectedFileUri = vscode.Uri.file(data.value);
+						this._targetMode = 'file';
+					} else {
+						this._selectedFileUri = undefined;
+						this._targetMode = 'auto';
+					}
 					break;
 				case 'refreshModels':
 					await this.checkModelStatus();
@@ -195,6 +205,31 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		} catch { return '파일 구조를 읽는 중 오류 발생'; }
 	}
 
+	private async readProjectFiles(): Promise<string> {
+		const codeExts = ['ts', 'js', 'tsx', 'jsx', 'json', 'css', 'html', 'md', 'py', 'java', 'go', 'rs', 'vue', 'svelte'];
+		const pattern = '**/*.{' + codeExts.join(',') + '}';
+		const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 50);
+		let result = '';
+		let totalChars = 0;
+		const maxChars = 30000; // Context window limit
+
+		for (const file of files) {
+			if (totalChars >= maxChars) {
+				result += '\n...(컨텍스트 한도 도달, 나머지 파일 생략)\n';
+				break;
+			}
+			try {
+				const data = await vscode.workspace.fs.readFile(file);
+				const text = Buffer.from(data).toString('utf8');
+				const relPath = vscode.workspace.asRelativePath(file);
+				const truncated = text.length > 3000 ? text.substring(0, 3000) + '\n...(파일 일부 생략)' : text;
+				result += '\n--- ' + relPath + ' ---\n' + truncated + '\n';
+				totalChars += truncated.length;
+			} catch { /* skip unreadable files */ }
+		}
+		return result;
+	}
+
 	private async getPersonaInstructions(): Promise<string> {
 		const folders = vscode.workspace.workspaceFolders;
 		if (!folders) { return ''; }
@@ -271,18 +306,29 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		const structure = await this.getWorkspaceStructure();
 		const persona = await this.getPersonaInstructions();
 
-		// Auto-exploration hint when no file content is available
+		// Build context based on target mode
+		let fileContext = '';
+		if (this._targetMode === 'project') {
+			this._view?.webview.postMessage({ type: 'chatChunk', value: '📂 전체 프로젝트 파일을 읽는 중...\n' });
+			const projectContent = await this.readProjectFiles();
+			fileContext = '[전체 프로젝트 소스 코드]:\n' + projectContent;
+		} else if (ctx.fullText) {
+			fileContext = '[활성 파일: ' + ctx.fileName + ']:\n```' + ctx.languageId + '\n'
+				+ (ctx.fullText.length > 6000 ? ctx.fullText.substring(0, 6000) + '\n...(생략)' : ctx.fullText)
+				+ '\n```';
+		}
+
 		let autoExplore = '';
-		if (!ctx.fullText || ctx.fullText.trim().length === 0) {
+		if (!fileContext && this._targetMode === 'auto') {
 			autoExplore = '\n[자동 탐색 지시]: 활성 파일이 없습니다. list_files로 프로젝트를 탐색한 뒤 read_file로 핵심 파일을 읽어 분석을 시작하세요.\n';
 		}
 
 		const userPrompt = modePrefix + '사용자 명령: ' + text + '\n\n'
 			+ autoExplore
 			+ '### 현재 환경\n'
-			+ '- 활성 파일: ' + ctx.fileName + '\n'
+			+ '- 타겟 모드: ' + (this._targetMode === 'project' ? '전체 프로젝트' : this._targetMode === 'file' ? ctx.fileName : '자동') + '\n'
 			+ '- 언어: ' + ctx.languageId + '\n\n'
-			+ (ctx.fullText ? '[활성 파일 내용]:\n```' + ctx.languageId + '\n' + (ctx.fullText.length > 6000 ? ctx.fullText.substring(0, 6000) + '\n...(생략)' : ctx.fullText) + '\n```\n\n' : '')
+			+ fileContext + '\n\n'
 			+ (ctx.selectedText ? '[선택된 코드]:\n```\n' + ctx.selectedText + '\n```\n\n' : '')
 			+ structure + '\n'
 			+ persona;
@@ -430,7 +476,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 				</div>
 				<div class="selector-item">
 					<label>Target</label>
-					<select id="file-select"><option value="">(Auto: 활성 에디터)</option></select>
+					<select id="file-select"><option value="">(Auto: 활성 에디터)</option><option value="__PROJECT__">📁 전체 프로젝트</option></select>
 				</div>
 			</div>
 			<div class="mode-indicator">

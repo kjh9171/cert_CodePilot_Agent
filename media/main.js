@@ -223,7 +223,7 @@
 
     function updateFileSelector(files) {
         const val = fileSelect.value;
-        fileSelect.innerHTML = '<option value="">(Auto: 활성 에디터)</option>';
+        fileSelect.innerHTML = '<option value="">(Auto: 활성 에디터)</option><option value="__PROJECT__">📁 전체 프로젝트</option>';
         files.forEach(f => {
             const opt = document.createElement('option');
             opt.value = f.value; opt.text = f.label;
