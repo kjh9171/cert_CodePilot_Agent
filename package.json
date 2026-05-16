@@ -1,0 +1,62 @@
+{
+  "name": "codepilot-agent",
+  "displayName": "CodePilot Agent",
+  "description": "자율형 에이전틱 코딩 에이전트 - 로컬 LLM 기반 PDCA 자동 코딩",
+  "version": "1.0.0",
+  "publisher": "antigravity",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:codepilot-chat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codepilot-agent.start",
+        "title": "Start CodePilot Agent"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codepilot-explorer",
+          "title": "CodePilot",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codepilot-explorer": [
+        {
+          "type": "webview",
+          "id": "codepilot-chat",
+          "name": "CodePilot Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "16.x",
+    "@typescript-eslint/eslint-plugin": "^5.59.1",
+    "@typescript-eslint/parser": "^5.59.1",
+    "eslint": "^8.39.0",
+    "typescript": "^5.0.4"
+  },
+  "dependencies": {
+    "axios": "^1.4.0"
+  }
+}
