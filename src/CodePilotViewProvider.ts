@@ -29,7 +29,12 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		_token: vscode.CancellationToken,
 	) {
 		this._view = webviewView;
-		webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
+		webviewView.webview.options = { 
+			enableScripts: true, 
+			localResourceRoots: [this._extensionUri],
+		};
+		// @ts-ignore
+		webviewView.options = { retainContextWhenHidden: true };
 		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
 		webviewView.webview.onDidReceiveMessage(async data => {
@@ -296,7 +301,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		if (mode === 'plan') {
 			modePrefix = '[MODE: PLAN] 분석 및 기획에 집중하세요. [P] Plan을 상세한 보고서 형태로 작성하세요.\n';
 		} else if (mode === 'build') {
-			modePrefix = '[MODE: BUILD] 구현에 집중하세요. 반드시 도구를 사용하여 실제 파일을 수정하세요.\n';
+			modePrefix = '[MODE: BUILD] 구현 모드입니다. 코드를 채팅창에 설명만 하지 말고, 반드시 <tool_call name="write_file"> 도구를 사용하여 소스코드 파일에 직접 반영하세요.\n';
 		}
 
 		// Gather all context

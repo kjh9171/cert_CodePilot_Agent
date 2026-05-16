@@ -18,6 +18,19 @@
     // ─── State ───
     let currentResponseDiv = null;
     let isProcessing = false;
+    let chatHistory = [];
+
+    // Load persisted state
+    const previousState = vscode.getState();
+    if (previousState) {
+        if (previousState.chatHistory) {
+            previousState.chatHistory.forEach(m => addMessage(m.text, m.role, false));
+        }
+    }
+
+    function saveState() {
+        vscode.setState({ chatHistory });
+    }
 
     // ─── Quick Actions ───
     refactorBtn.addEventListener('click', () => { userInput.value = '이 코드를 리팩토링해줘.'; sendMessage(); });
@@ -92,7 +105,11 @@
     refreshModelsBtn.addEventListener('click', () => vscode.postMessage({ type: 'refreshModels' }));
 
     // ─── Message Rendering ───
-    function addMessage(text, role) {
+    function addMessage(text, role, saveToHistory = true) {
+        if (saveToHistory) {
+            chatHistory.push({ text, role });
+            saveState();
+        }
         const div = document.createElement('div');
         div.className = 'message ' + role;
 
@@ -125,14 +142,13 @@
         switch (msg.type) {
             case 'startMessage': {
                 removeThinking();
-                currentResponseDiv = addMessage('', 'assistant');
+                currentResponseDiv = addMessage('', 'assistant', false);
                 break;
             }
 
             case 'chatChunk': {
                 if (!currentResponseDiv) {
-                    removeThinking();
-                    currentResponseDiv = addMessage('', 'assistant');
+                    currentResponseDiv = addMessage('', 'assistant', false);
                 }
                 const contentEl = currentResponseDiv.querySelector('.content');
                 contentEl.textContent += msg.value;
@@ -182,6 +198,11 @@
 
             case 'done': {
                 removeThinking();
+                if (currentResponseDiv) {
+                    const fullText = currentResponseDiv.querySelector('.content').textContent;
+                    chatHistory.push({ text: fullText, role: 'assistant' });
+                    saveState();
+                }
                 currentResponseDiv = null;
                 unlockInput();
                 break;
