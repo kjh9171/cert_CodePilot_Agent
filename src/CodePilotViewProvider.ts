@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import axios from 'axios';
 
+type WorkMode = 'plan' | 'build' | 'auto';
+type BuildPhase = 'plan' | 'implement' | 'review';
+
 export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 
 	public static readonly viewType = 'codepilot-chat';
@@ -13,6 +16,61 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 	private _isProcessing = false;
 	private _targetMode: 'auto' | 'file' | 'project' = 'auto';
 	private _maxAgentLoops = 5;
+	private _workMode: WorkMode = 'auto';
+	private _buildPhase: BuildPhase = 'plan';
+	private _buildPlan = '';
+
+	private readonly seniorSystemPrompt = `당신은 시니어 풀스택 개발자이자 보안 리서처입니다. 디자인 감각도 뛰어나며, 최신 보안 트렌드와 모던한 UI/UX 패턴을 이해합니다. 또한 지속적인 학습과 자기 개선을 통해 발전하는 AI 에이전트입니다.
+
+## 역할
+- 시니어 풀스택 개발자: Frontend, Backend, DevOps를 포함한 전체 스택을 설계하고 구현
+- 보안 리서처: OWASP Top 10 (2021/2024), CVE 모니터링, Secure Coding Practices 적용, 취약점 분석
+- 디자이너: 현대적인 UI/UX 원칙 적용, 반응형 디자인, 접근성 고려 (WCAG 2.1)
+- 학습자: 새로운 기술, 프레임워크, 보안 트렌드를 지속적으로 학습하고 적용
+
+## 지속적인 학습 원칙
+1. 새로운 기술/보안 이슈 발견 시 연구하고 적용
+2. 코드 작성 후 피드백을 통해 학습
+3. 최신 개발 트렌드 (AI/ML, Web3, Edge Computing 등) 추적
+4. 보안 취약점 발견 시 즉시 수정 및 개선
+5. 성능 최적화와 베스트 프랙티스 적용
+
+## 작업 모드
+
+### 플랜모드 (Plan)
+사용자의 요구사항을 분석하고 구현 계획을 수립합니다:
+1. 요구사항 분석 및 명확화
+2. 기술 스택 선정 (보안, 확장성, 성능 고려) - 최신 기술 우선
+3. 아키텍처 설계 및 파일 구조 정의
+4. 구현 단계별 작업 계획
+5. 예상되는 문제점과 해결 방안
+6. 보안 리스크 평가 및 완화 전략
+
+### 빌드모드 (Build)
+플랜모드에서 수립한 계획에 따라 실제로 코드를 작성합니다:
+1. 파일 생성/수정/삭제
+2. 보안 취약점 체크 및 수정 (입력 검증, 인증, 암호화 등)
+3. 코드 리팩토링 및 최적화
+4. 테스트 코드 작성 (단위 테스트, 통합 테스트)
+5. 성능 및 보안 최종 검토
+6. 문서화 및 코드 코멘트 작성
+
+## 도구 사용
+- read_file: 파일 내용 읽기 (파라미터: path)
+- write_file: 파일 생성/수정 (파라미터: path, content)
+- list_files: 디렉토리 구조 확인 (파라미터: path)
+- run_command: 터미널 명령어 실행 (파라미터: command)
+
+## 응답 형식
+도구를 사용할 때는 다음 형식으로 출력하세요:
+<tool_name>{"path": "파일경로", "content": "내용"}</tool_name>
+
+코드 블록은 \`\`\`language 형태로 감싸기
+설명은 간결하고 명확하게
+보안 이슈 발견 시 즉시 경고
+새로운 기술/방법 적용 시 그 이유와 benefits 설명`;
+
+	private _learningHistory: string[] = [];
 
 	constructor(private readonly _extensionUri: vscode.Uri) {
 		vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -29,13 +87,14 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		_token: vscode.CancellationToken,
 	) {
 		this._view = webviewView;
-		webviewView.webview.options = { 
-			enableScripts: true, 
+		webviewView.webview.options = {
+			enableScripts: true,
 			localResourceRoots: [this._extensionUri],
 		};
-		// @ts-ignore
-		webviewView.options = { retainContextWhenHidden: true };
-		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+		(webviewView as any).options = { retainContextWhenHidden: true };
+		this._getHtmlForWebview(webviewView.webview).then(html => {
+			webviewView.webview.html = html;
+		});
 
 		webviewView.webview.onDidReceiveMessage(async data => {
 			switch (data.type) {
@@ -70,13 +129,9 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		this.checkModelStatus();
 	}
 
-	// ─────────────── Model & Status ───────────────
-
 	private async checkModelStatus() {
-		// Step 1: Always load workspace files (independent of LM Studio)
 		await this.refreshFileList();
 
-		// Step 2: Try to connect to LM Studio
 		try {
 			const response = await axios.get(this._lmStudioUrl + '/models', { timeout: 5000 });
 			const models = response.data.data;
@@ -87,15 +142,23 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					this._selectedModel = this._availableModels[0];
 				}
 				this._view?.webview.postMessage({
-					type: 'updateModels', models: this._availableModels,
+					type: 'updateModels',
+					models: this._availableModels,
 					selected: this._selectedModel
 				});
 			} else {
-				this._view?.webview.postMessage({ type: 'modelStatus', value: '모델 없음', online: false });
+				this._view?.webview.postMessage({
+					type: 'modelStatus',
+					value: '모델 없음',
+					online: false
+				});
 			}
 		} catch {
-			this._view?.webview.postMessage({ type: 'modelStatus', value: 'LM Studio 오프라인', online: false });
-			// Auto-retry after 5 seconds
+			this._view?.webview.postMessage({
+				type: 'modelStatus',
+				value: 'LM Studio 오프라인',
+				online: false
+			});
 			setTimeout(() => this.checkModelStatus(), 5000);
 		}
 	}
@@ -103,31 +166,33 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 	private async refreshFileList() {
 		try {
 			const files = await vscode.workspace.findFiles('**/*', '**/node_modules/**', 100);
-			const fileOptions = files.map(f => ({ label: vscode.workspace.asRelativePath(f), value: f.fsPath }));
-			this._view?.webview.postMessage({ type: 'updateFiles', files: fileOptions });
-		} catch { /* ignore */ }
+			const fileOptions = files.map(f => ({
+				label: vscode.workspace.asRelativePath(f),
+				value: f.fsPath
+			}));
+			this._view?.webview.postMessage({
+				type: 'updateFiles',
+				files: fileOptions
+			});
+		} catch {
+			// ignore
+		}
 	}
-
-	// ─────────────── Tool Execution ───────────────
 
 	private async executeTool(toolName: string, argsStr: string): Promise<string> {
 		let args: any = {};
 		try {
 			args = JSON.parse(argsStr.trim());
 		} catch {
-			// Advanced fallback for malformed JSON (especially multiline strings in write_file)
 			if (toolName === 'write_file') {
 				const pathMatch = argsStr.match(/"path"\s*:\s*"([^"]+)"/);
-				const contentMatch = argsStr.match(/"content"\s*:\s*"([\s\S]*?)"\s*}/) 
-								  || argsStr.match(/"content"\s*:\s*`([\s\S]*?)`\s*}/)
-								  || argsStr.match(/"content"\s*:\s*([\s\S]*?)\s*}/);
-				
+				const contentMatch = argsStr.match(/"content"\s*:\s*"([\s\S]*?)"\s*/);
+
 				if (pathMatch) args.path = pathMatch[1];
 				if (contentMatch) {
 					let rawContent = contentMatch[1];
-					// Strip leading/trailing quotes if caught by the generic matcher
-					if (rawContent.startsWith('"') && rawContent.endsWith('"')) rawContent = rawContent.slice(1, -1);
-					args.content = rawContent.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+					if (rawContent.startsWith('^') && rawContent.endsWith('')) rawContent = rawContent.slice(1, -1);
+					args.content = rawContent.replace(/\\n/g, '\\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 				}
 			} else {
 				args = { path: argsStr.trim().replace(/['"{}]/g, '').split(':').pop()?.trim() || argsStr.trim() };
@@ -135,7 +200,11 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		}
 
 		const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-		this._view?.webview.postMessage({ type: 'toolStatus', tool: toolName, status: 'running' });
+		this._view?.webview.postMessage({
+			type: 'toolStatus',
+			tool: toolName,
+			status: 'running'
+		});
 
 		try {
 			switch (toolName) {
@@ -144,7 +213,6 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					const uri = vscode.Uri.file(rootPath + '/' + filePath);
 					const content = await vscode.workspace.fs.readFile(uri);
 					const text = Buffer.from(content).toString('utf8');
-					// Truncate very large files to prevent context overflow
 					const truncated = text.length > 8000 ? text.substring(0, 8000) + '\n...(truncated)' : text;
 					return '[read_file 완료] ' + filePath + ':\n' + truncated;
 				}
@@ -154,7 +222,6 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					if (!filePath || !fileContent) { return '[write_file 오류] path와 content가 필요합니다.'; }
 					const uri = vscode.Uri.file(rootPath + '/' + filePath);
 					await vscode.workspace.fs.writeFile(uri, Buffer.from(fileContent, 'utf8'));
-					// Open the file in editor so user can see it
 					const doc = await vscode.workspace.openTextDocument(uri);
 					await vscode.window.showTextDocument(doc, { preview: false });
 					return '[write_file 완료] ' + filePath + ' 파일이 생성/수정되었습니다.';
@@ -180,11 +247,13 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		} catch (error: any) {
 			return '[도구 실행 오류] ' + toolName + ': ' + error.message;
 		} finally {
-			this._view?.webview.postMessage({ type: 'toolStatus', tool: toolName, status: 'done' });
+			this._view?.webview.postMessage({
+				type: 'toolStatus',
+				tool: toolName,
+				status: 'done'
+			});
 		}
 	}
-
-	// ─────────────── Code Application ───────────────
 
 	private async applyCodeToEditor(code: string) {
 		let editor = this._lastActiveEditor || vscode.window.activeTextEditor;
@@ -192,7 +261,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 			try {
 				const doc = await vscode.workspace.openTextDocument(this._selectedFileUri);
 				editor = await vscode.window.showTextDocument(doc, { preserveFocus: true, preview: false });
-			} catch { /* fallback to current editor */ }
+			} catch { /* fallback */ }
 		}
 		if (!editor && vscode.window.visibleTextEditors.length > 0) {
 			editor = vscode.window.visibleTextEditors[0];
@@ -209,326 +278,137 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
-	// ─────────────── Context Gathering ───────────────
-
 	private async gatherContext(): Promise<{ fileName: string; languageId: string; fullText: string; selectedText: string }> {
 		let editor = vscode.window.activeTextEditor || this._lastActiveEditor;
 		let document = editor?.document;
 
-		if (this._selectedFileUri) {
-			try { document = await vscode.workspace.openTextDocument(this._selectedFileUri); } catch { /* ignore */ }
+		if (!document) {
+			return { fileName: '', languageId: '', fullText: '', selectedText: '' };
 		}
 
-		const selection = editor?.selection;
-		const selectedText = (editor && document === editor.document && selection && !selection.isEmpty) ? document!.getText(selection) : '';
-		const fullText = document?.getText() || '';
-		const languageId = document?.languageId || 'plaintext';
-		const fileName = document ? vscode.workspace.asRelativePath(document.uri) : '(파일 없음)';
+		const fullText = document.getText();
+		const selectedText = String(editor?.selection.start.character || 0);
+		const context = {
+			fileName: document.fileName,
+			languageId: document.languageId,
+			fullText: fullText,
+			selectedText: selectedText,
+		};
 
-		return { fileName, languageId, fullText, selectedText };
+		return context;
 	}
 
-	private async getWorkspaceStructure(): Promise<string> {
-		const folders = vscode.workspace.workspaceFolders;
-		if (!folders) { return '열린 워크스페이스가 없습니다.'; }
-		try {
-			const files = await vscode.workspace.findFiles('**/*', '**/node_modules/**', 100);
-			if (files.length === 0) { return '워크스페이스에 파일이 없습니다.'; }
-			return '[프로젝트 파일 구조]:\n' + files.map(f => vscode.workspace.asRelativePath(f)).join('\n');
-		} catch { return '파일 구조를 읽는 중 오류 발생'; }
-	}
-
-	private async readProjectFiles(): Promise<string> {
-		const codeExts = ['ts', 'js', 'tsx', 'jsx', 'json', 'css', 'html', 'md', 'py', 'java', 'go', 'rs', 'vue', 'svelte'];
-		const pattern = '**/*.{' + codeExts.join(',') + '}';
-		const files = await vscode.workspace.findFiles(pattern, '**/node_modules/**', 50);
-		let result = '';
-		let totalChars = 0;
-		const maxChars = 30000; // Context window limit
-
-		for (const file of files) {
-			if (totalChars >= maxChars) {
-				result += '\n...(컨텍스트 한도 도달, 나머지 파일 생략)\n';
-				break;
-			}
-			try {
-				const data = await vscode.workspace.fs.readFile(file);
-				const text = Buffer.from(data).toString('utf8');
-				const relPath = vscode.workspace.asRelativePath(file);
-				const truncated = text.length > 3000 ? text.substring(0, 3000) + '\n...(파일 일부 생략)' : text;
-				result += '\n--- ' + relPath + ' ---\n' + truncated + '\n';
-				totalChars += truncated.length;
-			} catch { /* skip unreadable files */ }
-		}
-		return result;
-	}
-
-	private async getPersonaInstructions(): Promise<string> {
-		const folders = vscode.workspace.workspaceFolders;
-		if (!folders) { return ''; }
-		for (const folder of folders) {
-			for (const name of ['.codepilot.md', '.gemini.md']) {
-				try {
-					const data = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folder.uri, name));
-					return '\n[Persona: ' + name + ']:\n' + Buffer.from(data).toString('utf8');
-				} catch { /* continue */ }
-			}
-		}
-		return '';
-	}
-
-	// ─────────────── System Prompt ───────────────
-
-	private buildSystemPrompt(): string {
-		return `당신은 CodePilot Agent v1.0.0, 자율형 에이전틱 코딩 에이전트입니다.
-모든 응답은 반드시 **한국어**로 작성합니다.
-
-## 핵심 임무
-사용자의 요청을 완수하기 위해 코드를 직접 수정하고 서비스를 빌드해야 합니다.
-
-## 도구 사용법 (반드시 이 형식을 엄수하세요)
-<tool_call name="도구이름">{"인자": "값"}</tool_call>
-
-- **read_file**: <tool_call name="read_file">{"path": "src/extension.ts"}</tool_call>
-- **write_file**: <tool_call name="write_file">{"path": "src/test.ts", "content": "코드 내용"}</tool_call>
-- **list_files**: <tool_call name="list_files">{"path": "."}</tool_call>
-- **run_command**: <tool_call name="run_command">{"command": "npm run compile"}</tool_call>
-
-## 빌드 오류 수정 가이드
-1. **오류 확인**: \`run_command\`로 \`npm run compile\`을 실행하여 정확한 에러 메시지를 확인하세요.
-2. **코드 분석**: 에러가 발생한 파일을 \`read_file\`로 읽으세요.
-3. **수정**: \`write_file\`로 코드를 수정하세요.
-4. **재검증**: 다시 \`npm run compile\`을 실행하여 해결되었는지 확인하세요.
-
-## 행동 규칙
-1. **[D] Do 단계에서는 반드시 위 형식의 <tool_call>을 포함하세요.**
-2. **새 파일을 생성하거나 수정할 때, 마크다운 코드블록(\`\`\`html 등)만 출력하면 실패입니다. 반드시 <tool_call name="write_file"> 안에 코드를 넣으세요.**
-3. 계획만 세우지 말고 즉시 도구를 호출하세요.
-4. "코드를 주세요"라고 요청하지 말고 직접 파일을 읽으세요.`;
-	}
-
-	// ─────────────── Main Agent Loop ───────────────
-
-	private async handleUserMessage(text: string, mode: string = 'plan') {
-		if (!this._view) { return; }
+	private async handleUserMessage(userMessage: string, mode: string) {
 		this._isProcessing = true;
+		this._workMode = mode === 'plan' ? 'plan' : mode === 'build' ? 'build' : 'auto';
 
-		// Build mode-specific prefix
-		let modePrefix = '';
-		if (mode === 'plan') {
-			modePrefix = '[MODE: PLAN] 분석 및 기획에 집중하세요. [P] Plan을 상세한 보고서 형태로 작성하세요.\n';
-		} else if (mode === 'build') {
-			modePrefix = '[MODE: BUILD] 구현 모드입니다. 코드를 채팅창에 설명만 하지 말고, 반드시 <tool_call name="write_file"> 도구를 사용하여 소스코드 파일에 직접 반영하세요.\n';
-		}
-
-		// Gather all context
-		const ctx = await this.gatherContext();
-		const structure = await this.getWorkspaceStructure();
-		const persona = await this.getPersonaInstructions();
-
-		// Build context based on target mode
-		let fileContext = '';
-		if (this._targetMode === 'project') {
-			this._view?.webview.postMessage({ type: 'chatChunk', value: '📂 전체 프로젝트 파일을 읽는 중...\n' });
-			const projectContent = await this.readProjectFiles();
-			fileContext = '[전체 프로젝트 소스 코드]:\n' + projectContent;
-		} else if (ctx.fullText) {
-			fileContext = '[활성 파일: ' + ctx.fileName + ']:\n```' + ctx.languageId + '\n'
-				+ (ctx.fullText.length > 6000 ? ctx.fullText.substring(0, 6000) + '\n...(생략)' : ctx.fullText)
-				+ '\n```';
-		}
-
-		let autoExplore = '';
-		if (!fileContext && this._targetMode === 'auto') {
-			autoExplore = '\n[자동 탐색 지시]: 활성 파일이 없습니다. list_files로 프로젝트를 탐색한 뒤 read_file로 핵심 파일을 읽어 분석을 시작하세요.\n';
-		}
-
-		const userPrompt = modePrefix + '사용자 명령: ' + text + '\n\n'
-			+ autoExplore
-			+ '### 현재 환경\n'
-			+ '- 타겟 모드: ' + (this._targetMode === 'project' ? '전체 프로젝트' : this._targetMode === 'file' ? ctx.fileName : '자동') + '\n'
-			+ '- 언어: ' + ctx.languageId + '\n\n'
-			+ fileContext + '\n\n'
-			+ (ctx.selectedText ? '[선택된 코드]:\n```\n' + ctx.selectedText + '\n```\n\n' : '')
-			+ structure + '\n'
-			+ persona;
-
-		const messages = [
-			{ role: 'system', content: this.buildSystemPrompt() },
-			{ role: 'user', content: userPrompt }
-		];
-
-		await this.runAgentLoop(messages);
-		this._isProcessing = false;
-	}
-
-	private async runAgentLoop(messages: any[], loopCount: number = 0) {
-		if (!this._view || loopCount >= this._maxAgentLoops) {
-			if (loopCount >= this._maxAgentLoops) {
-				this._view?.webview.postMessage({ type: 'addResponse', value: '⚠️ 에이전트 루프 최대 횟수에 도달했습니다. 작업을 중단합니다.' });
-			}
-			this._view?.webview.postMessage({ type: 'done' });
+		if (this._workMode === 'build' && !this._buildPlan) {
+			this._view?.webview.postMessage({ type: 'message', content: '⚠️ 빌드모드를 실행하려면 먼저 플랜모드에서 계획을 세워주세요.' });
+			this._isProcessing = false;
 			return;
 		}
 
-		this._view.webview.postMessage({ type: 'thinking' });
+		const context = await this.gatherContext();
+		const targetInfo = this._targetMode === 'file' ? '타겟 파일: ' + (this._selectedFileUri?.fsPath || '') :
+			this._targetMode === 'project' ? '프로젝트 레벨 작업' : '자동 모드';
+
+		let systemPrompt = '';
+		if (this._workMode === 'plan') {
+			systemPrompt = this.seniorSystemPrompt + '\n\n## 현재 작업\n- 모드: 플랜모드 (계획 수립)\n- ' + targetInfo + '\n- 파일: ' + (context.fileName || '없음') + '\n\n사용자의 요구사항을 분석하고 상세한 구현 계획을 세워주세요.';
+		} else if (this._workMode === 'build') {
+			systemPrompt = this.seniorSystemPrompt + '\n\n## 현재 작업\n- 모드: 빌드모드 (구현)\n- ' + targetInfo + '\n- 이전 계획:\n' + this._buildPlan + '\n\n 수립된 계획에 따라 코드를 작성/수정해주세요.';
+		} else {
+			systemPrompt = this.seniorSystemPrompt + '\n\n## 현재 작업\n- ' + targetInfo + '\n- 파일: ' + (context.fileName || '없음') + '\n\n사용자 요청: ' + userMessage;
+		}
 
 		try {
-			const response = await axios.post(this._lmStudioUrl + '/chat/completions', {
-				model: this._selectedModel || 'local-model',
-				messages: messages,
-				temperature: 0.7,
-				stream: true
-			}, {
-				timeout: 180000,
-				responseType: 'stream'
-			});
+			this._view?.webview.postMessage({ type: 'message', content: '🤔 thinking...' });
 
-			this._view.webview.postMessage({ type: 'startMessage' });
+			let loopCount = 0;
 			let fullResponse = '';
+			let lastToolCall = '';
 
-			await new Promise<void>((resolve) => {
-				const safetyTimer = setTimeout(() => resolve(), 180000);
-				response.data.on('data', (chunk: Buffer) => {
-					const lines = chunk.toString().split('\n');
-					for (const line of lines) {
-						if (!line.trim().startsWith('data: ')) { continue; }
-						const jsonStr = line.replace('data: ', '').trim();
-						if (jsonStr === '[DONE]') { continue; }
-						try {
-							const json = JSON.parse(jsonStr);
-							const delta = json.choices?.[0]?.delta?.content || '';
-							if (delta) {
-								fullResponse += delta;
-								this._view?.webview.postMessage({ type: 'chatChunk', value: delta });
-							}
-						} catch { /* skip */ }
-					}
-				});
-				response.data.on('end', () => { clearTimeout(safetyTimer); resolve(); });
-				response.data.on('error', () => { clearTimeout(safetyTimer); resolve(); });
-			});
+			while (loopCount < this._maxAgentLoops) {
+				const response = await this.callLMStudio(
+					this._workMode === 'plan' ? '플랜모드: ' + userMessage :
+						this._workMode === 'build' ? '빌드모드: ' + userMessage : userMessage,
+					systemPrompt,
+					fullResponse + (lastToolCall ? '\n도구 결과: ' + lastToolCall : '')
+				);
 
-			// Store assistant's thoughts in history
-			messages.push({ role: 'assistant', content: fullResponse });
+				fullResponse += response;
+				const toolCalls = this.extractToolCalls(response);
 
-			// Step 2: Execute tools (Robust Regex for various model outputs)
-			const toolRegex = /<tool_call(?:\s+name="([^"]+)")?>([\s\S]*?)<\/tool_call>/g;
-			let toolMatch;
-			const toolResults: string[] = [];
-
-			while ((toolMatch = toolRegex.exec(fullResponse)) !== null) {
-				let [, toolName, content] = toolMatch;
-				let argsStr = content;
-
-				// Fallback: If name attribute is missing, try to parse from content (e.g., <tool_call>read_file{"path":...}</tool_call>)
-				if (!toolName) {
-					const fallbackMatch = content.trim().match(/^(\w+)\s*({[\s\S]*})$/);
-					if (fallbackMatch) {
-						toolName = fallbackMatch[1];
-						argsStr = fallbackMatch[2];
-					} else {
-						continue; // Unknown format, skip
-					}
+				if (toolCalls.length === 0) {
+					break;
 				}
-				this._view?.webview.postMessage({ type: 'chatChunk', value: '\n⚙️ [' + toolName + '] 실행 중...\n' });
-				const result = await this.executeTool(toolName, argsStr);
-				toolResults.push(result);
-				this._view?.webview.postMessage({ type: 'chatChunk', value: '✅ ' + result.split('\n')[0] + '\n' });
+
+				for (const toolCall of toolCalls) {
+					lastToolCall = await this.executeTool(toolCall.name, toolCall.args);
+					fullResponse += '\n[' + toolCall.name + ' 결과]\n' + lastToolCall;
+				}
+				loopCount++;
 			}
 
-			// Step 3: Recurse if tools were called
-			if (toolResults.length > 0 && loopCount < this._maxAgentLoops - 1) {
-				const resultText = '[도구 실행 결과]:\n' + toolResults.join('\n---\n') + '\n\n위 결과를 바탕으로 다음 단계(구현 또는 요약)를 진행하세요. 이미 Plan이 있다면 즉시 [D] Do 단계로 넘어가세요.';
-				messages.push({ role: 'user', content: resultText });
-				
-				this._view.webview.postMessage({
-					type: 'addResponse',
-					value: '🔄 도구 결과 분석 중... (' + (loopCount + 1) + '/' + this._maxAgentLoops + ')'
+			if (this._workMode === 'plan') {
+				this._buildPlan = fullResponse;
+				this._buildPhase = 'implement';
+				this._view?.webview.postMessage({
+					type: 'planReady',
+					plan: fullResponse,
+					nextAction: '이제 빌드모드로 전환하여 구현을 진행할 수 있습니다.'
 				});
-
-				await this.runAgentLoop(messages, loopCount + 1);
-				return;
+			} else {
+				this._view?.webview.postMessage({ type: 'message', content: fullResponse });
 			}
-
-			this._view?.webview.postMessage({ type: 'done' });
 
 		} catch (error: any) {
-			let msg = error.message || '알 수 없는 오류';
-			this._view?.webview.postMessage({ type: 'addResponse', value: '❌ 오류: ' + msg });
-			this._view?.webview.postMessage({ type: 'done' });
+			this._view?.webview.postMessage({
+				type: 'message',
+				content: '❌ 오류가 발생했습니다: ' + error.message
+			});
+		}
+
+		this._isProcessing = false;
+	}
+
+	private async callLMStudio(prompt: string, systemPrompt: string, history: string): Promise<string> {
+		try {
+			const response = await axios.post(this._lmStudioUrl + '/chat/completions', {
+				model: this._selectedModel,
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: history + '\n\n' + prompt }
+				],
+				temperature: 0.7,
+				max_tokens: 2000,
+			}, { timeout: 120000 });
+
+			return response.data.choices[0].message.content;
+		} catch (error: any) {
+			throw new Error('LM Studio 통신 실패: ' + error.message);
 		}
 	}
 
-	// ─────────────── Security ───────────────
+	private extractToolCalls(response: string): { name: string; args: string }[] {
+		const toolCalls: { name: string; args: string }[] = [];
+		const regex = new RegExp('<(read_file|write_file|list_files|run_command)>([\\s\\S]*?)<\\/\\1>', 'g');
+		let match;
 
-	private isMalicious(text: string): boolean {
-		return [/rm\s+-rf\s+\//i, /format\s+c:/i, /:(){ :\|:& };:/].some(p => p.test(text));
+		while ((match = regex.exec(response)) !== null) {
+			toolCalls.push({
+				name: match[1],
+				args: match[2].trim()
+			});
+		}
+
+		return toolCalls;
 	}
 
-	// ─────────────── HTML ───────────────
-
-	private _getHtmlForWebview(webview: vscode.Webview) {
-		const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.js'));
-		const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'main.css'));
-
-		return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<link href="${styleUri}" rel="stylesheet">
-	<title>CodePilot Agent</title>
-</head>
-<body>
-	<div class="main-container">
-		<div class="header">
-			<div class="title-row">
-				<h1>🚀 CodePilot Agent <span class="version">v1.0.0</span></h1>
-				<button id="refresh-models-btn" title="새로고침">🔄</button>
-			</div>
-			<div class="selector-group">
-				<div class="selector-item">
-					<label>Model</label>
-					<select id="model-select"><option>연결 중...</option></select>
-				</div>
-				<div class="selector-item">
-					<label>Target</label>
-					<select id="file-select"><option value="">(Auto: 활성 에디터)</option><option value="__PROJECT__">📁 전체 프로젝트</option></select>
-				</div>
-			</div>
-			<div class="tab-bar" style="margin-top: 10px; display: flex; gap: 8px;">
-				<button class="tab-btn active" data-tab="plan" style="flex: 1;">📋 Plan 모드</button>
-				<button class="tab-btn" data-tab="build" style="flex: 1;">🛠️ Build 모드</button>
-			</div>
-		</div>
-
-		<div class="chat-panel" style="flex: 1; overflow-y: auto; padding: 10px;">
-			<div id="chat-messages">
-				<div class="message assistant welcome">
-					<div class="welcome-title">🚀 CodePilot Agent v1.0.0</div>
-					<div class="welcome-body">자율형 에이전틱 코딩 에이전트가 준비되었습니다.<br>
-					<strong>Tab</strong> 키를 눌러 <strong>모드(Plan/Build)</strong>를 전환할 수 있습니다.<br><br>
-					📋 <strong>Plan</strong> — 분석 및 기획 특화<br>
-					🛠️ <strong>Build</strong> — 구현 및 실제 파일 수정 특화</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="input-area">
-			<div class="input-wrapper">
-				<textarea id="user-input" placeholder="명령을 입력하세요... (Tab: 모드 전환, Enter: 전송)" rows="2"></textarea>
-				<button id="send-btn" class="send-btn">전송</button>
-			</div>
-			<div class="action-buttons">
-				<button id="refactor-btn" class="action-btn">✨ 리팩토링</button>
-				<button id="debug-btn" class="action-btn">🐞 디버그</button>
-				<button id="analyze-btn" class="action-btn">🔍 전체 분석</button>
-			</div>
-		</div>
-	</div>
-	<script src="${scriptUri}"></script>
-</body>
-</html>`;
+	private async _getHtmlForWebview(webview: vscode.Webview): Promise<string> {
+		const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.html');
+		const fileData = await vscode.workspace.fs.readFile(htmlPath);
+		const htmlContent = Buffer.from(fileData).toString('utf8');
+		return htmlContent;
 	}
 }

@@ -1,8 +1,8 @@
 {
   "name": "codepilot-agent",
   "displayName": "CodePilot Agent",
-  "description": "자율형 에이전틱 코딩 에이전트 - 로컬 LLM 기반 PDCA 자동 코딩",
-  "version": "1.0.0",
+  "description": "자율형 에이전틱 코딩 에이전트 - 로컬 LLM 기반 자체 학습 코딩 에이전트",
+  "version": "1.1.0",
   "publisher": "antigravity",
   "engines": {
     "vscode": "^1.80.0"

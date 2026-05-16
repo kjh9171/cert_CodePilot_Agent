@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<style>
+		:root {
+			--bg-primary: #1e1e1e;
+			--bg-secondary: #252526;
+			--bg-tertiary: #2d2d30;
+			--text-primary: #cccccc;
+			--text-secondary: #858585;
+			--accent: #0e639c;
+			--accent-hover: #1177bb;
+			--success: #4ec9b0;
+			--warning: #dcdcaa;
+			--error: #f14c4c;
+			--border: #3c3c3c;
+		}
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background: var(--bg-primary);
+			color: var(--text-primary);
+			height: 100vh;
+			display: flex;
+			flex-direction: column;
+		}
+		.header {
+			padding: 12px 16px;
+			background: var(--bg-secondary);
+			border-bottom: 1px solid var(--border);
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+		}
+		.header h2 { font-size: 14px; font-weight: 500; }
+		.status { font-size: 12px; color: var(--text-secondary); }
+		.status.online { color: var(--success); }
+		.status.offline { color: var(--error); }
+		.controls {
+			padding: 12px;
+			background: var(--bg-secondary);
+			border-bottom: 1px solid var(--border);
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+		}
+		.mode-selector {
+			display: flex;
+			gap: 8px;
+		}
+		.mode-btn {
+			flex: 1;
+			padding: 8px 12px;
+			background: var(--bg-tertiary);
+			border: 1px solid var(--border);
+			color: var(--text-primary);
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 13px;
+			transition: all 0.2s;
+		}
+		.mode-btn:hover { background: var(--accent); }
+		.mode-btn.active { background: var(--accent); border-color: var(--accent); }
+		.mode-btn.plan { border-left: 3px solid var(--warning); }
+		.mode-btn.build { border-left: 3px solid var(--success); }
+		.selectors { display: flex; gap: 8px; }
+		select, input {
+			flex: 1;
+			padding: 6px 8px;
+			background: var(--bg-tertiary);
+			border: 1px solid var(--border);
+			color: var(--text-primary);
+			border-radius: 4px;
+			font-size: 12px;
+		}
+		.chat-container {
+			flex: 1;
+			overflow-y: auto;
+			padding: 12px;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+		}
+		.message {
+			padding: 10px 14px;
+			border-radius: 6px;
+			font-size: 13px;
+			line-height: 1.5;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+		.message.user {
+			background: var(--accent);
+			align-self: flex-end;
+			max-width: 85%;
+		}
+		.message.assistant {
+			background: var(--bg-secondary);
+			border: 1px solid var(--border);
+		}
+		.message.system { 
+			background: var(--bg-tertiary);
+			border-left: 3px solid var(--warning);
+			font-style: italic;
+		}
+		.code-block {
+			background: var(--bg-tertiary);
+			border-radius: 4px;
+			overflow: hidden;
+			margin: 8px 0;
+		}
+		.code-block pre {
+			padding: 12px;
+			overflow-x: auto;
+			font-family: 'Fira Code', 'Consolas', monospace;
+			font-size: 12px;
+			line-height: 1.4;
+		}
+		.tool-status {
+			padding: 8px 12px;
+			background: var(--bg-tertiary);
+			border-radius: 4px;
+			font-size: 12px;
+			color: var(--text-secondary);
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.tool-status .spinner {
+			width: 14px;
+			height: 14px;
+			border: 2px solid var(--border);
+			border-top-color: var(--accent);
+			border-radius: 50%;
+			animation: spin 1s linear infinite;
+		}
+		@keyframes spin { to { transform: rotate(360deg); } }
+		.input-area {
+			padding: 12px;
+			background: var(--bg-secondary);
+			border-top: 1px solid var(--border);
+			display: flex;
+			gap: 8px;
+		}
+		.input-area input {
+			flex: 1;
+			padding: 10px 12px;
+		}
+		.input-area button {
+			padding: 10px 16px;
+			background: var(--accent);
+			border: none;
+			color: white;
+			border-radius: 4px;
+			cursor: pointer;
+			font-weight: 500;
+		}
+		.input-area button:hover { background: var(--accent-hover); }
+		.input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
+		.plan-display {
+			background: var(--bg-tertiary);
+			border: 1px solid var(--success);
+			border-radius: 6px;
+			padding: 12px;
+			margin: 8px 0;
+		}
+		.plan-display h4 {
+			color: var(--success);
+			margin-bottom: 8px;
+			font-size: 13px;
+		}
+		.apply-btn {
+			margin-top: 8px;
+			padding: 6px 12px;
+			background: var(--success);
+			border: none;
+			color: #1e1e1e;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 12px;
+		}
+	</style>
+</head>
+<body>
+	<div class="header">
+		<h2>🤖 CodePilot Agent</h2>
+		<span class="status" id="modelStatus">LM Studio 연결 대기중...</span>
+	</div>
+	<div class="controls">
+		<div class="mode-selector">
+			<button class="mode-btn auto active" onclick="setMode('auto')">🔄 자동</button>
+			<button class="mode-btn plan" onclick="setMode('plan')">📋 플랜</button>
+			<button class="mode-btn build" onclick="setMode('build')">🔨 빌드</button>
+		</div>
+		<div class="selectors">
+			<select id="modelSelect" onchange="selectModel(this.value)">
+				<option value="">모델 선택...</option>
+			</select>
+			<select id="fileSelect" onchange="selectFile(this.value)">
+				<option value="">파일 선택...</option>
+			</select>
+		</div>
+	</div>
+	<div class="chat-container" id="chatContainer"></div>
+	<div class="input-area">
+		<input type="text" id="userInput" placeholder="코드를 작성해줘, 버그를 수정해줘..." onkeypress="handleKeyPress(event)">
+		<button id="sendBtn" onclick="sendMessage()">전송</button>
+	</div>
+	<script>
+		let currentMode = 'auto';
+		let isProcessing = false;
+
+		function setMode(mode) {
+			currentMode = mode;
+			document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+			document.querySelector('.mode-btn.' + mode).classList.add('active');
+		}
+
+		async function sendMessage() {
+			const input = document.getElementById('userInput');
+			const btn = document.getElementById('sendBtn');
+			const message = input.value.trim();
+			if (!message || isProcessing) return;
+
+			isProcessing = true;
+			btn.disabled = true;
+			input.value = '';
+
+			addMessage(message, 'user');
+
+			try {
+				const vscode = acquireVsCodeApi();
+				vscode.postMessage({ type: 'sendMessage', value: message, mode: currentMode });
+			} catch (e) {
+				console.error(e);
+			}
+		}
+
+		function handleKeyPress(e) {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				sendMessage();
+			}
+		}
+
+		function escapeHtml(text) {
+			return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		}
+
+		function addMessage(content, role) {
+			const container = document.getElementById('chatContainer');
+			const div = document.createElement('div');
+			div.className = 'message ' + role;
+			
+			if (role === 'assistant' && content.includes('```')) {
+				const codeBlock = content.replace(/\`\`\`(\w+)?\n([\s\S]*?)\`\`\`/g, 
+					'<div class="code-block"><pre><code>' + escapeHtml('$2') + '</code></pre></div>');
+				div.innerHTML = codeBlock.replace('$2', '$2');
+			} else {
+				div.textContent = content;
+			}
+			
+			container.appendChild(div);
+			container.scrollTop = container.scrollHeight;
+		}
+
+		function selectModel(model) {
+			const vscode = acquireVsCodeApi();
+			vscode.postMessage({ type: 'selectModel', value: model });
+		}
+
+		function selectFile(file) {
+			const vscode = acquireVsCodeApi();
+			vscode.postMessage({ type: 'selectFile', value: file });
+		}
+
+		window.addEventListener('message', async event => {
+			const data = event.data;
+			if (data.type === 'message') {
+				addMessage(data.content, 'assistant');
+			} else if (data.type === 'modelStatus') {
+				const status = document.getElementById('modelStatus');
+				status.textContent = data.value;
+				status.className = 'status ' + (data.online ? 'online' : 'offline');
+			} else if (data.type === 'updateModels') {
+				const select = document.getElementById('modelSelect');
+				select.innerHTML = '<option value="">모델 선택...</option>';
+				data.models.forEach(m => {
+					const opt = document.createElement('option');
+					opt.value = m;
+					opt.textContent = m;
+					select.appendChild(opt);
+				});
+			} else if (data.type === 'updateFiles') {
+				const select = document.getElementById('fileSelect');
+				select.innerHTML = '<option value="">파일 선택...</option>';
+				select.innerHTML += '<option value="__PROJECT__">📁 전체 프로젝트</option>';
+				data.files.forEach(f => {
+					const opt = document.createElement('option');
+					opt.value = f.value;
+					opt.textContent = '📄 ' + f.label;
+					select.appendChild(opt);
+				});
+			} else if (data.type === 'toolStatus') {
+				addMessage('🔧 도구 실행 중: ' + data.tool, 'system');
+			} else if (data.type === 'planReady') {
+				const container = document.getElementById('chatContainer');
+				const planDiv = document.createElement('div');
+				planDiv.className = 'plan-display';
+				planDiv.innerHTML = '<h4>📋 구현 계획이 수립되었습니다</h4>' + 
+					'<pre style="white-space: pre-wrap; font-size: 12px;">' + escapeHtml(data.plan) + '</pre>' +
+					'<p style="margin-top: 8px; color: var(--success);">' + data.nextAction + '</p>';
+				container.appendChild(planDiv);
+				setMode('build');
+			} else if (data.type === 'applyCode') {
+				const vscode = acquireVsCodeApi();
+				vscode.postMessage({ type: 'applyCode', value: data.code });
+			}
+			
+			if (data.type !== 'toolStatus') {
+				isProcessing = false;
+				document.getElementById('sendBtn').disabled = false;
+			}
+		});
+	</script>
+</body>
+</html>
