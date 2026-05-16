@@ -263,30 +263,26 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 모든 응답은 반드시 **한국어**로 작성합니다.
 
 ## 핵심 임무
-당신은 사용자의 요청을 완수하기 위해 코드를 직접 수정하고 서비스를 빌드해야 합니다. 단순한 조언이나 계획에 머물지 마세요.
+사용자의 요청을 완수하기 위해 코드를 직접 수정하고 서비스를 빌드해야 합니다.
 
-## 워크플로우 (PDCA)
-당신은 여러 단계에 걸쳐 작업을 수행할 수 있습니다. 
-1. **[P] Plan**: 처음 한 번만 상세히 수립합니다. 이미 계획이 있다면 생략하거나 짧게 언급하세요.
-2. **[D] Do**: **가장 중요합니다.** <tool_call>을 사용하여 파일을 실제로 수정하세요.
-3. **[C] Check**: 도구 실행 결과를 확인하고 다음 단계가 필요한지 판단합니다.
-4. **[A] Act**: 최종 작업 완료 시 요약합니다.
+## 도구 사용법 (반드시 이 형식을 엄수하세요)
+<tool_call name="도구이름">{"인자": "값"}</tool_call>
 
-## 연속 실행 규칙 (중요)
-- 당신은 루프(Loop) 내에서 실행 중일 수 있습니다. 이전 대화 기록을 확인하여 어디까지 진행되었는지 파악하세요.
-- **이미 계획(Plan)이 세워졌다면 다시 계획을 세우지 말고 즉시 [D] Do 단계로 넘어가서 도구를 사용하세요.**
-- 같은 작업을 반복하지 마세요. (예: 이미 파일을 읽었다면 다시 읽지 말고 바로 수정하세요)
+- **read_file**: <tool_call name="read_file">{"path": "src/extension.ts"}</tool_call>
+- **write_file**: <tool_call name="write_file">{"path": "src/test.ts", "content": "코드 내용"}</tool_call>
+- **list_files**: <tool_call name="list_files">{"path": "."}</tool_call>
+- **run_command**: <tool_call name="run_command">{"command": "npm run compile"}</tool_call>
 
-## 도구 사용법
-<tool_call name="도구이름">{"key": "value"}</tool_call>
-- write_file: 코드를 실제로 적용할 때 반드시 사용하세요.
-- read_file: 코드 분석이 필요할 때 사용하세요.
-- list_files: 폴더 구조 파악 시 사용하세요.
+## 빌드 오류 수정 가이드
+1. **오류 확인**: \`run_command\`로 \`npm run compile\`을 실행하여 정확한 에러 메시지를 확인하세요.
+2. **코드 분석**: 에러가 발생한 파일을 \`read_file\`로 읽으세요.
+3. **수정**: \`write_file\`로 코드를 수정하세요.
+4. **재검증**: 다시 \`npm run compile\`을 실행하여 해결되었는지 확인하세요.
 
 ## 행동 규칙
-1. **실제 코드를 작성하고 파일을 수정하는 것에 집중하세요.**
-2. 설명은 짧게, 구현(Tool Call)은 확실하게 하세요.
-3. 계획만 반복하는 "분석 마비"에 빠지지 마세요.`;
+1. **[D] Do 단계에서는 반드시 위 형식의 <tool_call>을 포함하세요.**
+2. 계획만 세우지 말고 즉시 도구를 호출하세요.
+3. "코드를 주세요"라고 요청하지 말고 직접 파일을 읽으세요.`;
 	}
 
 	// ─────────────── Main Agent Loop ───────────────
@@ -394,13 +390,25 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 			// Store assistant's thoughts in history
 			messages.push({ role: 'assistant', content: fullResponse });
 
-			// Step 2: Execute tools
-			const toolRegex = /<tool_call name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
+			// Step 2: Execute tools (Robust Regex for various model outputs)
+			const toolRegex = /<tool_call(?:\s+name="([^"]+)")?>([\s\S]*?)<\/tool_call>/g;
 			let toolMatch;
 			const toolResults: string[] = [];
 
 			while ((toolMatch = toolRegex.exec(fullResponse)) !== null) {
-				const [, toolName, argsStr] = toolMatch;
+				let [, toolName, content] = toolMatch;
+				let argsStr = content;
+
+				// Fallback: If name attribute is missing, try to parse from content (e.g., <tool_call>read_file{"path":...}</tool_call>)
+				if (!toolName) {
+					const fallbackMatch = content.trim().match(/^(\w+)\s*({[\s\S]*})$/);
+					if (fallbackMatch) {
+						toolName = fallbackMatch[1];
+						argsStr = fallbackMatch[2];
+					} else {
+						continue; // Unknown format, skip
+					}
+				}
 				this._view?.webview.postMessage({ type: 'chatChunk', value: '\n⚙️ [' + toolName + '] 실행 중...\n' });
 				const result = await this.executeTool(toolName, argsStr);
 				toolResults.push(result);
