@@ -68,11 +68,13 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 	// ─────────────── Model & Status ───────────────
 
 	private async checkModelStatus() {
+		// Step 1: Always load workspace files (independent of LM Studio)
+		await this.refreshFileList();
+
+		// Step 2: Try to connect to LM Studio
 		try {
-			const response = await axios.get(this._lmStudioUrl + '/models');
+			const response = await axios.get(this._lmStudioUrl + '/models', { timeout: 5000 });
 			const models = response.data.data;
-			const files = await vscode.workspace.findFiles('**/*', '**/node_modules/**', 100);
-			const fileOptions = files.map(f => ({ label: vscode.workspace.asRelativePath(f), value: f.fsPath }));
 
 			if (models && models.length > 0) {
 				this._availableModels = models.map((m: any) => m.id);
@@ -81,14 +83,24 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 				}
 				this._view?.webview.postMessage({
 					type: 'updateModels', models: this._availableModels,
-					selected: this._selectedModel, files: fileOptions
+					selected: this._selectedModel
 				});
 			} else {
-				this._view?.webview.postMessage({ type: 'updateStatus', value: 'No models loaded', online: false, files: fileOptions });
+				this._view?.webview.postMessage({ type: 'modelStatus', value: '모델 없음', online: false });
 			}
 		} catch {
-			this._view?.webview.postMessage({ type: 'updateStatus', value: 'LM Studio Offline', online: false });
+			this._view?.webview.postMessage({ type: 'modelStatus', value: 'LM Studio 오프라인', online: false });
+			// Auto-retry after 5 seconds
+			setTimeout(() => this.checkModelStatus(), 5000);
 		}
+	}
+
+	private async refreshFileList() {
+		try {
+			const files = await vscode.workspace.findFiles('**/*', '**/node_modules/**', 100);
+			const fileOptions = files.map(f => ({ label: vscode.workspace.asRelativePath(f), value: f.fsPath }));
+			this._view?.webview.postMessage({ type: 'updateFiles', files: fileOptions });
+		} catch { /* ignore */ }
 	}
 
 	// ─────────────── Tool Execution ───────────────

@@ -211,12 +211,16 @@
                     if (m === msg.selected) opt.selected = true;
                     modelSelect.appendChild(opt);
                 });
+                break;
+            }
+
+            case 'updateFiles': {
                 if (msg.files) updateFileSelector(msg.files);
                 break;
             }
 
-            case 'updateStatus': {
-                if (msg.files) updateFileSelector(msg.files);
+            case 'modelStatus': {
+                modelSelect.innerHTML = `<option>${msg.value}</option>`;
                 break;
             }
         }
