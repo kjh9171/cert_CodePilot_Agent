@@ -130,21 +130,13 @@ body {
     color: var(--text-muted);
 }
 
-/* ─── Workspace Body ─── */
-.workspace-body {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-    min-height: 0;
-}
-
 /* ─── Chat Panel ─── */
 .chat-panel {
     flex: 1;
     display: flex;
     flex-direction: column;
-    min-width: 0;
-    border-right: 1px solid var(--border);
+    min-height: 0;
+    overflow: hidden;
 }
 
 #chat-messages {
@@ -268,85 +260,7 @@ body {
     40% { transform: scale(1); opacity: 1; }
 }
 
-/* ─── Artifact Panel ─── */
-.artifact-panel {
-    flex: 1.1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    overflow: hidden;
-}
-
-.tab-bar {
-    display: flex;
-    padding: 6px 8px;
-    gap: 4px;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-}
-
-.tab-btn {
-    flex: 1;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-muted);
-    padding: 7px 10px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    border-radius: 7px;
-    transition: all 0.2s;
-}
-
-.tab-btn:hover {
-    color: var(--text-secondary);
-    background: rgba(108, 138, 255, 0.05);
-}
-
-.tab-btn.active {
-    background: var(--accent-gradient);
-    color: white;
-    border-color: transparent;
-    box-shadow: 0 2px 12px var(--accent-glow);
-}
-
-.tab-content {
-    display: none;
-    flex: 1;
-    flex-direction: column;
-    overflow: hidden;
-}
-.tab-content.active { display: flex; }
-
-.view-header {
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--accent);
-    padding: 10px 12px 6px;
-    border-bottom: 1px solid var(--border);
-}
-
-.markdown-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 10px 12px;
-    font-size: 0.8rem;
-    line-height: 1.65;
-    color: var(--text-secondary);
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.markdown-body::-webkit-scrollbar { width: 4px; }
-.markdown-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-#tool-log {
-    max-height: 120px;
-    overflow-y: auto;
-    padding: 6px 10px;
-    border-top: 1px solid var(--border);
-    font-size: 0.72rem;
-}
+/* Removed Artifact Panel and Split View */
 
 .tool-entry {
     padding: 3px 0;

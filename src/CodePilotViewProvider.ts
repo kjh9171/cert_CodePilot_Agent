@@ -497,40 +497,20 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					<select id="file-select"><option value="">(Auto: 활성 에디터)</option><option value="__PROJECT__">📁 전체 프로젝트</option></select>
 				</div>
 			</div>
-			<div class="mode-indicator">
-				<span id="mode-label">📋 Plan 모드</span>
-				<span class="mode-hint">Tab 키로 전환</span>
+			<div class="tab-bar" style="margin-top: 10px; display: flex; gap: 8px;">
+				<button class="tab-btn active" data-tab="plan" style="flex: 1;">📋 Plan 모드</button>
+				<button class="tab-btn" data-tab="build" style="flex: 1;">🛠️ Build 모드</button>
 			</div>
 		</div>
 
-		<div class="workspace-body">
-			<div class="chat-panel">
-				<div id="chat-messages">
-					<div class="message assistant welcome">
-						<div class="welcome-title">🚀 CodePilot Agent v1.0.0</div>
-						<div class="welcome-body">자율형 에이전틱 코딩 에이전트가 준비되었습니다.<br>
-						<strong>Tab</strong> 키로 모드 전환 | <strong>Enter</strong> 전송<br><br>
-						📋 <strong>Plan</strong> — 프로젝트 분석 및 기획 보고서<br>
-						🛠️ <strong>Build</strong> — 코드 구현 및 파일 수정 실행</div>
-					</div>
-				</div>
-			</div>
-
-			<div class="artifact-panel">
-				<div class="tab-bar">
-					<button class="tab-btn active" data-tab="plan">📋 Plan</button>
-					<button class="tab-btn" data-tab="build">🛠️ Build</button>
-				</div>
-
-				<div id="plan-tab" class="tab-content active">
-					<div class="view-header">📊 분석 및 기획 보고서</div>
-					<div id="plan-viewer" class="markdown-body">Plan 모드에서 명령을 입력하면 분석 보고서가 여기에 표시됩니다.</div>
-				</div>
-
-				<div id="build-tab" class="tab-content">
-					<div class="view-header">⚡ 구현 및 도구 실행 로그</div>
-					<div id="build-viewer" class="markdown-body">Build 모드에서 명령을 입력하면 구현 내용이 여기에 표시됩니다.</div>
-					<div id="tool-log"></div>
+		<div class="chat-panel" style="flex: 1; overflow-y: auto; padding: 10px;">
+			<div id="chat-messages">
+				<div class="message assistant welcome">
+					<div class="welcome-title">🚀 CodePilot Agent v1.0.0</div>
+					<div class="welcome-body">자율형 에이전틱 코딩 에이전트가 준비되었습니다.<br>
+					<strong>Tab</strong> 키를 눌러 <strong>모드(Plan/Build)</strong>를 전환할 수 있습니다.<br><br>
+					📋 <strong>Plan</strong> — 분석 및 기획 특화<br>
+					🛠️ <strong>Build</strong> — 구현 및 실제 파일 수정 특화</div>
 				</div>
 			</div>
 		</div>

@@ -12,8 +12,6 @@
     const fileSelect = document.getElementById('file-select');
     const refreshModelsBtn = document.getElementById('refresh-models-btn');
     const tabBtns = document.querySelectorAll('.tab-btn');
-    const tabContents = document.querySelectorAll('.tab-content');
-    const modeLabel = document.getElementById('mode-label');
 
     // ─── State ───
     let currentResponseDiv = null;
@@ -77,9 +75,8 @@
 
     function switchTab(tabId) {
         tabBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === tabId));
-        tabContents.forEach(c => c.classList.toggle('active', c.id === tabId + '-tab'));
-        if (modeLabel) modeLabel.textContent = modeLabels[tabId] || '';
         userInput.placeholder = placeholders[tabId] || '명령을 입력하세요...';
+        currentMode = tabId;
     }
 
     tabBtns.forEach(btn => {
@@ -209,17 +206,10 @@
             }
 
             case 'toolStatus': {
-                const logEl = document.getElementById('tool-log');
-                if (logEl) {
-                    const entry = document.createElement('div');
-                    entry.className = 'tool-entry ' + msg.status;
-                    entry.textContent = (msg.status === 'running' ? '⚙️ ' : '✅ ') + msg.tool;
-                    logEl.appendChild(entry);
-                    logEl.scrollTop = logEl.scrollHeight;
-                }
-                // Auto-switch to Build tab when tools are running
                 if (msg.status === 'running') {
-                    switchTab('build');
+                    addMessage('⚙️ [' + msg.tool + '] 실행 중...', 'assistant', false);
+                } else {
+                    // done state is usually handled by returning a string from the backend anyway
                 }
                 break;
             }
