@@ -111,11 +111,27 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 	// ─────────────── Tool Execution ───────────────
 
 	private async executeTool(toolName: string, argsStr: string): Promise<string> {
-		let args: any;
+		let args: any = {};
 		try {
 			args = JSON.parse(argsStr.trim());
 		} catch {
-			args = { path: argsStr.trim().replace(/['"{}]/g, '').split(':').pop()?.trim() || argsStr.trim() };
+			// Advanced fallback for malformed JSON (especially multiline strings in write_file)
+			if (toolName === 'write_file') {
+				const pathMatch = argsStr.match(/"path"\s*:\s*"([^"]+)"/);
+				const contentMatch = argsStr.match(/"content"\s*:\s*"([\s\S]*?)"\s*}/) 
+								  || argsStr.match(/"content"\s*:\s*`([\s\S]*?)`\s*}/)
+								  || argsStr.match(/"content"\s*:\s*([\s\S]*?)\s*}/);
+				
+				if (pathMatch) args.path = pathMatch[1];
+				if (contentMatch) {
+					let rawContent = contentMatch[1];
+					// Strip leading/trailing quotes if caught by the generic matcher
+					if (rawContent.startsWith('"') && rawContent.endsWith('"')) rawContent = rawContent.slice(1, -1);
+					args.content = rawContent.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+				}
+			} else {
+				args = { path: argsStr.trim().replace(/['"{}]/g, '').split(':').pop()?.trim() || argsStr.trim() };
+			}
 		}
 
 		const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
@@ -286,8 +302,9 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 
 ## 행동 규칙
 1. **[D] Do 단계에서는 반드시 위 형식의 <tool_call>을 포함하세요.**
-2. 계획만 세우지 말고 즉시 도구를 호출하세요.
-3. "코드를 주세요"라고 요청하지 말고 직접 파일을 읽으세요.`;
+2. **새 파일을 생성하거나 수정할 때, 마크다운 코드블록(\`\`\`html 등)만 출력하면 실패입니다. 반드시 <tool_call name="write_file"> 안에 코드를 넣으세요.**
+3. 계획만 세우지 말고 즉시 도구를 호출하세요.
+4. "코드를 주세요"라고 요청하지 말고 직접 파일을 읽으세요.`;
 	}
 
 	// ─────────────── Main Agent Loop ───────────────
