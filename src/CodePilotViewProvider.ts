@@ -262,41 +262,31 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		return `당신은 CodePilot Agent v1.0.0, 자율형 에이전틱 코딩 에이전트입니다.
 모든 응답은 반드시 **한국어**로 작성합니다.
 
-## 핵심 원칙
-당신은 단순한 챗봇이 아닙니다. 직접 파일을 읽고, 코드를 작성하고, 서비스를 완성하는 **자율 코딩 에이전트**입니다.
+## 핵심 임무
+당신은 사용자의 요청을 완수하기 위해 코드를 직접 수정하고 서비스를 빌드해야 합니다. 단순한 조언이나 계획에 머물지 마세요.
 
-## 워크플로우 (PDCA - 매 응답 필수)
+## 워크플로우 (PDCA)
+당신은 여러 단계에 걸쳐 작업을 수행할 수 있습니다. 
+1. **[P] Plan**: 처음 한 번만 상세히 수립합니다. 이미 계획이 있다면 생략하거나 짧게 언급하세요.
+2. **[D] Do**: **가장 중요합니다.** <tool_call>을 사용하여 파일을 실제로 수정하세요.
+3. **[C] Check**: 도구 실행 결과를 확인하고 다음 단계가 필요한지 판단합니다.
+4. **[A] Act**: 최종 작업 완료 시 요약합니다.
 
-### [P] Plan (보고서 형태)
-- 현재 상황 분석 (프로젝트 구조, 기술 스택, 문제점)
-- 구체적 수정 계획 (어떤 파일을, 어떻게 수정할지)
-- 예상 결과
-
-### [D] Do (실제 구현 - 반드시 도구 사용)
-- 계획에 따라 도구를 호출하여 실제 파일을 생성/수정/삭제합니다.
-- 텍스트 설명만으로 끝내는 것은 금지입니다.
-
-### [C] Check (검증)
-- 구현 결과를 확인합니다.
-
-### [A] Act (요약)
-- 완료된 작업과 후속 작업을 정리합니다.
+## 연속 실행 규칙 (중요)
+- 당신은 루프(Loop) 내에서 실행 중일 수 있습니다. 이전 대화 기록을 확인하여 어디까지 진행되었는지 파악하세요.
+- **이미 계획(Plan)이 세워졌다면 다시 계획을 세우지 말고 즉시 [D] Do 단계로 넘어가서 도구를 사용하세요.**
+- 같은 작업을 반복하지 마세요. (예: 이미 파일을 읽었다면 다시 읽지 말고 바로 수정하세요)
 
 ## 도구 사용법
-도구를 호출할 때는 반드시 다음 형식을 사용하세요:
 <tool_call name="도구이름">{"key": "value"}</tool_call>
+- write_file: 코드를 실제로 적용할 때 반드시 사용하세요.
+- read_file: 코드 분석이 필요할 때 사용하세요.
+- list_files: 폴더 구조 파악 시 사용하세요.
 
-사용 가능한 도구:
-- read_file: {"path": "상대경로"} - 파일 읽기
-- write_file: {"path": "상대경로", "content": "파일내용"} - 파일 쓰기
-- list_files: {"path": "디렉토리"} - 파일 목록 조회
-- run_command: {"command": "명령어"} - 터미널 명령 실행
-
-## 행동 규칙 (위반 시 실패)
-1. **"코드를 제공해주세요"라고 절대 말하지 마세요.** 대신 list_files와 read_file로 직접 찾으세요.
-2. **[D] Do 단계에서는 반드시 tool_call을 포함하세요.** 텍스트만 쓰는 것은 실패입니다.
-3. **사용자의 추가 확인을 기다리지 마세요.** Plan을 세웠다면 즉시 실행하세요.
-4. **도구 호출의 JSON은 반드시 유효한 JSON이어야 합니다.**`;
+## 행동 규칙
+1. **실제 코드를 작성하고 파일을 수정하는 것에 집중하세요.**
+2. 설명은 짧게, 구현(Tool Call)은 확실하게 하세요.
+3. 계획만 반복하는 "분석 마비"에 빠지지 마세요.`;
 	}
 
 	// ─────────────── Main Agent Loop ───────────────
@@ -345,14 +335,19 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 			+ structure + '\n'
 			+ persona;
 
-		await this.runAgentLoop(userPrompt);
+		const messages = [
+			{ role: 'system', content: this.buildSystemPrompt() },
+			{ role: 'user', content: userPrompt }
+		];
+
+		await this.runAgentLoop(messages);
 		this._isProcessing = false;
 	}
 
-	private async runAgentLoop(userPrompt: string, loopCount: number = 0) {
+	private async runAgentLoop(messages: any[], loopCount: number = 0) {
 		if (!this._view || loopCount >= this._maxAgentLoops) {
 			if (loopCount >= this._maxAgentLoops) {
-				this._view?.webview.postMessage({ type: 'addResponse', value: '⚠️ 에이전트 루프 최대 횟수에 도달했습니다.' });
+				this._view?.webview.postMessage({ type: 'addResponse', value: '⚠️ 에이전트 루프 최대 횟수에 도달했습니다. 작업을 중단합니다.' });
 			}
 			this._view?.webview.postMessage({ type: 'done' });
 			return;
@@ -363,10 +358,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 		try {
 			const response = await axios.post(this._lmStudioUrl + '/chat/completions', {
 				model: this._selectedModel || 'local-model',
-				messages: [
-					{ role: 'system', content: this.buildSystemPrompt() },
-					{ role: 'user', content: userPrompt }
-				],
+				messages: messages,
 				temperature: 0.7,
 				stream: true
 			}, {
@@ -377,13 +369,8 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 			this._view.webview.postMessage({ type: 'startMessage' });
 			let fullResponse = '';
 
-			// Step 1: Collect all text synchronously (NO async in data handler)
 			await new Promise<void>((resolve) => {
-				// Safety timeout — if stream hangs, force-resolve after 3 minutes
-				const safetyTimer = setTimeout(() => {
-					resolve();
-				}, 180000);
-
+				const safetyTimer = setTimeout(() => resolve(), 180000);
 				response.data.on('data', (chunk: Buffer) => {
 					const lines = chunk.toString().split('\n');
 					for (const line of lines) {
@@ -397,58 +384,47 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 								fullResponse += delta;
 								this._view?.webview.postMessage({ type: 'chatChunk', value: delta });
 							}
-						} catch { /* incomplete JSON chunk, skip */ }
+						} catch { /* skip */ }
 					}
 				});
-
 				response.data.on('end', () => { clearTimeout(safetyTimer); resolve(); });
 				response.data.on('error', () => { clearTimeout(safetyTimer); resolve(); });
 			});
 
-			// Step 2: After stream is COMPLETE, find and execute all tool calls
+			// Store assistant's thoughts in history
+			messages.push({ role: 'assistant', content: fullResponse });
+
+			// Step 2: Execute tools
 			const toolRegex = /<tool_call name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
 			let toolMatch;
 			const toolResults: string[] = [];
 
 			while ((toolMatch = toolRegex.exec(fullResponse)) !== null) {
 				const [, toolName, argsStr] = toolMatch;
-				this._view?.webview.postMessage({
-					type: 'chatChunk',
-					value: '\n⚙️ [' + toolName + '] 실행 중...\n'
-				});
-
+				this._view?.webview.postMessage({ type: 'chatChunk', value: '\n⚙️ [' + toolName + '] 실행 중...\n' });
 				const result = await this.executeTool(toolName, argsStr);
 				toolResults.push(result);
-
-				this._view?.webview.postMessage({
-					type: 'chatChunk',
-					value: '✅ ' + result.split('\n')[0] + '\n'
-				});
+				this._view?.webview.postMessage({ type: 'chatChunk', value: '✅ ' + result.split('\n')[0] + '\n' });
 			}
 
-			// Step 3: If tools ran, feed results back for next PDCA cycle
+			// Step 3: Recurse if tools were called
 			if (toolResults.length > 0 && loopCount < this._maxAgentLoops - 1) {
+				const resultText = '[도구 실행 결과]:\n' + toolResults.join('\n---\n') + '\n\n위 결과를 바탕으로 다음 단계(구현 또는 요약)를 진행하세요. 이미 Plan이 있다면 즉시 [D] Do 단계로 넘어가세요.';
+				messages.push({ role: 'user', content: resultText });
+				
 				this._view.webview.postMessage({
 					type: 'addResponse',
-					value: '🔄 도구 실행 완료 (' + toolResults.length + '건). 다음 단계 진행 중...'
+					value: '🔄 도구 결과 분석 중... (' + (loopCount + 1) + '/' + this._maxAgentLoops + ')'
 				});
 
-				const continuationPrompt = '[이전 단계의 도구 실행 결과]:\n'
-					+ toolResults.join('\n---\n')
-					+ '\n\n위 결과를 바탕으로 PDCA 워크플로우의 다음 단계를 진행하세요.'
-					+ ' 추가 도구 호출이 필요하면 계속 진행하고, 모든 작업이 완료되었으면 [A] Act로 최종 요약하세요.';
-
-				await this.runAgentLoop(continuationPrompt, loopCount + 1);
-				return; // Don't send 'done' yet — recursive call will handle it
+				await this.runAgentLoop(messages, loopCount + 1);
+				return;
 			}
 
-			// Step 4: All done — unlock the UI
 			this._view?.webview.postMessage({ type: 'done' });
 
 		} catch (error: any) {
 			let msg = error.message || '알 수 없는 오류';
-			if (error.code === 'ECONNABORTED') { msg = '응답 시간 초과. LM Studio를 확인하세요.'; }
-			else if (error.code === 'ECONNREFUSED') { msg = 'LM Studio에 연결할 수 없습니다. LM Studio를 실행해주세요.'; }
 			this._view?.webview.postMessage({ type: 'addResponse', value: '❌ 오류: ' + msg });
 			this._view?.webview.postMessage({ type: 'done' });
 		}
