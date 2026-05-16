@@ -296,6 +296,7 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 			if (loopCount >= this._maxAgentLoops) {
 				this._view?.webview.postMessage({ type: 'addResponse', value: '⚠️ 에이전트 루프 최대 횟수에 도달했습니다.' });
 			}
+			this._view?.webview.postMessage({ type: 'done' });
 			return;
 		}
 
@@ -317,11 +318,15 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 
 			this._view.webview.postMessage({ type: 'startMessage' });
 			let fullResponse = '';
-			let buffer = '';
-			const toolResults: string[] = [];
 
+			// Step 1: Collect all text synchronously (NO async in data handler)
 			await new Promise<void>((resolve) => {
-				response.data.on('data', async (chunk: Buffer) => {
+				// Safety timeout — if stream hangs, force-resolve after 3 minutes
+				const safetyTimer = setTimeout(() => {
+					resolve();
+				}, 180000);
+
+				response.data.on('data', (chunk: Buffer) => {
 					const lines = chunk.toString().split('\n');
 					for (const line of lines) {
 						if (!line.trim().startsWith('data: ')) { continue; }
@@ -330,42 +335,40 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 						try {
 							const json = JSON.parse(jsonStr);
 							const delta = json.choices?.[0]?.delta?.content || '';
-							if (!delta) { continue; }
-
-							fullResponse += delta;
-							buffer += delta;
-							this._view?.webview.postMessage({ type: 'chatChunk', value: delta });
-
-							// Detect and execute tool calls in real-time
-							while (buffer.includes('</tool_call>')) {
-								const toolMatch = buffer.match(/<tool_call name="([^"]+)">([\s\S]*?)<\/tool_call>/);
-								if (!toolMatch) { break; }
-
-								const [fullMatch, toolName, argsStr] = toolMatch;
-								this._view?.webview.postMessage({
-									type: 'chatChunk',
-									value: '\n\n⚙️ [' + toolName + '] 실행 중...\n'
-								});
-
-								const result = await this.executeTool(toolName, argsStr);
-								toolResults.push(result);
-
-								this._view?.webview.postMessage({
-									type: 'chatChunk',
-									value: '✅ ' + result.split('\n')[0] + '\n'
-								});
-
-								buffer = buffer.replace(fullMatch, '');
+							if (delta) {
+								fullResponse += delta;
+								this._view?.webview.postMessage({ type: 'chatChunk', value: delta });
 							}
-						} catch { /* stream parse error, continue */ }
+						} catch { /* incomplete JSON chunk, skip */ }
 					}
 				});
 
-				response.data.on('end', () => resolve());
-				response.data.on('error', () => resolve());
+				response.data.on('end', () => { clearTimeout(safetyTimer); resolve(); });
+				response.data.on('error', () => { clearTimeout(safetyTimer); resolve(); });
 			});
 
-			// If tools were executed, feed results back for next PDCA cycle
+			// Step 2: After stream is COMPLETE, find and execute all tool calls
+			const toolRegex = /<tool_call name="([^"]+)">([\s\S]*?)<\/tool_call>/g;
+			let toolMatch;
+			const toolResults: string[] = [];
+
+			while ((toolMatch = toolRegex.exec(fullResponse)) !== null) {
+				const [, toolName, argsStr] = toolMatch;
+				this._view?.webview.postMessage({
+					type: 'chatChunk',
+					value: '\n⚙️ [' + toolName + '] 실행 중...\n'
+				});
+
+				const result = await this.executeTool(toolName, argsStr);
+				toolResults.push(result);
+
+				this._view?.webview.postMessage({
+					type: 'chatChunk',
+					value: '✅ ' + result.split('\n')[0] + '\n'
+				});
+			}
+
+			// Step 3: If tools ran, feed results back for next PDCA cycle
 			if (toolResults.length > 0 && loopCount < this._maxAgentLoops - 1) {
 				this._view.webview.postMessage({
 					type: 'addResponse',
@@ -378,13 +381,18 @@ export class CodePilotViewProvider implements vscode.WebviewViewProvider {
 					+ ' 추가 도구 호출이 필요하면 계속 진행하고, 모든 작업이 완료되었으면 [A] Act로 최종 요약하세요.';
 
 				await this.runAgentLoop(continuationPrompt, loopCount + 1);
+				return; // Don't send 'done' yet — recursive call will handle it
 			}
+
+			// Step 4: All done — unlock the UI
+			this._view?.webview.postMessage({ type: 'done' });
 
 		} catch (error: any) {
 			let msg = error.message || '알 수 없는 오류';
 			if (error.code === 'ECONNABORTED') { msg = '응답 시간 초과. LM Studio를 확인하세요.'; }
 			else if (error.code === 'ECONNREFUSED') { msg = 'LM Studio에 연결할 수 없습니다. LM Studio를 실행해주세요.'; }
 			this._view?.webview.postMessage({ type: 'addResponse', value: '❌ 오류: ' + msg });
+			this._view?.webview.postMessage({ type: 'done' });
 		}
 	}
 

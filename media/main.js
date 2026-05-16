@@ -167,9 +167,7 @@
 
             case 'addResponse': {
                 removeThinking();
-                unlockInput();
                 if (msg.value.includes('다음 단계 진행 중') || msg.value.includes('도구 실행 완료')) {
-                    // Continuation message — add as status, don't reset response div
                     const statusDiv = document.createElement('div');
                     statusDiv.className = 'message status-msg';
                     statusDiv.textContent = msg.value;
@@ -184,6 +182,13 @@
 
             case 'thinking': {
                 addThinking();
+                break;
+            }
+
+            case 'done': {
+                removeThinking();
+                currentResponseDiv = null;
+                unlockInput();
                 break;
             }
 
